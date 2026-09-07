@@ -2,24 +2,18 @@
 
 //! Internal plumbing: the integer mixers everything else is built from.
 //!
-//! A mixer stirs one integer into another. It is a bijection - no two inputs
-//! land on the same output, so mixing never loses information - chosen so that
-//! flipping any single input bit flips about half the output bits. That is the
-//! property a hash needs and that arithmetic does not have: `x * 31 + y` keeps
-//! small inputs small and neighbouring inputs neighbouring.
+//! A mixer stirs one integer into another. It is a bijection, so mixing never
+//! loses information, and flipping any single input bit flips about half the
+//! output bits - the property a hash needs and that `x * 31 + y` has not.
 //!
-//! `Murmur3` finishes with `fmix32`, and `combine` stirs every value it is
-//! given through `fmix64`, which is why both live here rather than in one of
-//! them.
-//!
-//! Nothing here is exported from `root.zig`.
+//! `Murmur3` finishes with `fmix32` and `combine` uses `fmix64`, which is why
+//! both live here rather than in either. Not exported from `root.zig`.
 
 const std = @import("std");
 const testing = std.testing;
 
-/// The 32-bit golden ratio, `2^32 / phi` rounded to an odd number. An odd
-/// multiplier keeps multiplication invertible; this particular one spreads
-/// consecutive inputs about as far apart as a constant can.
+/// The 32-bit golden ratio, `2^32 / phi` rounded to an odd number - odd so
+/// that multiplication stays invertible.
 pub const golden32: u32 = 0x9E3779B9;
 
 /// The 64-bit one, `2^64 / phi`.
@@ -52,8 +46,8 @@ pub fn fmix64(value: u64) u64 {
 // -------------------------------------------------------------------------
 
 test "zero stays zero" {
-    // Both finalizers are built from shifts and multiplies, so zero is a fixed
-    // point. Anything that hashes an empty message starts somewhere else.
+    // Shifts and multiplies only, so zero is a fixed point. Anything hashing an
+    // empty message starts somewhere else.
     try testing.expectEqual(@as(u32, 0), fmix32(0));
     try testing.expectEqual(@as(u64, 0), fmix64(0));
 }

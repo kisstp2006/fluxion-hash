@@ -2,32 +2,20 @@
 
 //! CRC-32: the checksum in gzip, PNG, zip and Ethernet.
 //!
-//! A CRC is not a hash. It is the remainder of a polynomial division over
-//! GF(2), which is a long way of saying it is linear - and that is the whole
-//! point. Linearity is what lets `combine` take the checksums of two pieces
-//! and produce the checksum of the two pieces joined, without looking at a
-//! single byte again. It is also why a CRC must never be used where a hash is
-//! wanted: given a checksum and a message, changing the message to keep the
-//! checksum is arithmetic, not work. Use `hash` for tables, `crc32` for
-//! transmission errors and bit rot.
+//! A CRC is not a hash: it is a polynomial remainder over GF(2), and therefore
+//! linear. That is what lets `combine` join the checksums of two pieces without
+//! re-reading a byte, and also why it must never stand in for a hash - given a
+//! checksum and a message, changing the message to keep the checksum is
+//! arithmetic, not work.
 //!
 //!   `Ieee`         the one people mean by "CRC-32": gzip, PNG, zip
 //!   `Castagnoli`   CRC-32C: iSCSI, ext4, and what SSE4.2 computes in hardware
 //!   `Crc32`        any other reflected polynomial you have to interoperate with
 //!
-//! Each answers to the same calls as a hasher from `hash`, so `Stream` and the
-//! rest work on them unchanged:
-//!
-//!   * `Digest`      always `u32`
-//!   * `hash`        one shot, over a slice
-//!   * `init`        start a running checksum
-//!   * `initFrom`    or resume one from a digest computed earlier
-//!   * `update`      feed it more bytes, any number of times
-//!   * `final`       read the checksum out
-//!   * `combine`     the checksum of two pieces, joined
-//!
-//! Nothing here allocates: the 1 KiB lookup table is built at compile time and
-//! lives in the binary.
+//! Each answers to the same calls as a hasher from `hash` - `Digest`, `hash`,
+//! `init`, `update`, `final` - and adds `initFrom`, to resume from a stored
+//! digest, and `combine`. Nothing allocates: the 1 KiB table is built at
+//! compile time.
 
 const std = @import("std");
 const testing = std.testing;
@@ -98,17 +86,16 @@ pub fn Crc32(comptime polynomial: Polynomial) type {
             return .{ .state = 0xFFFFFFFF };
         }
 
-        /// Carry on from a digest computed earlier - by another process, or by
-        /// this one before it stored the value and went away. Checksumming a
-        /// file in two sessions gives the same answer as doing it in one:
+        /// Carry on from a digest computed earlier, so checksumming a file in
+        /// two sessions gives the same answer as doing it in one:
         ///
         /// ```zig
         /// var crc: crc32.Ieee = .initFrom(stored);
         /// crc.update(new_bytes);
         /// ```
         ///
-        /// A CRC has no seed in the sense a hash does - there is nothing to
-        /// vary but the polynomial - so this is the only other way in.
+        /// A CRC has no seed - there is nothing to vary but the polynomial - so
+        /// this is the only other way in.
         pub fn initFrom(digest: Digest) Self {
             return .{ .state = ~digest };
         }
@@ -143,20 +130,18 @@ pub fn Crc32(comptime polynomial: Polynomial) type {
         /// Ieee.combine(Ieee.hash(a), Ieee.hash(b), b.len) == Ieee.hash(a ++ b)
         /// ```
         ///
-        /// Useful when the pieces arrive out of order, are checksummed on
-        /// different threads, or were checksummed years apart - appending to
-        /// an archive need not re-read the archive.
+        /// For pieces that arrive out of order, are checksummed on different
+        /// threads, or were checksummed years apart - appending to an archive
+        /// need not re-read it.
         ///
-        /// The work is proportional to the number of bits in `b_len`, not to
-        /// `b_len` itself: pushing a checksum through `n` zero bytes is a
-        /// linear map, so the map for `2n` zeros is the map for `n` applied
-        /// twice, and repeated squaring gets to any length in about 32 steps.
+        /// The work is proportional to the bits in `b_len`, not to `b_len`:
+        /// pushing a checksum through `n` zero bytes is a linear map, so
+        /// repeated squaring reaches any length in about 32 steps.
         pub fn combine(a: Digest, b: Digest, b_len: usize) Digest {
             if (b_len == 0) return a;
 
-            // The map for one zero bit. Row 0 is the polynomial - what a set
-            // top bit feeds back - and the rest is the identity shifted once,
-            // which is what the other bits do: move up one place.
+            // The map for one zero bit: row 0 is the polynomial a set top bit
+            // feeds back, the rest is the identity shifted once.
             var odd: [32]u32 = undefined;
             odd[0] = @intFromEnum(polynomial);
             var bit: u32 = 1;
@@ -172,9 +157,8 @@ pub fn Crc32(comptime polynomial: Polynomial) type {
             var crc = a;
             var len = b_len;
             while (true) {
-                // Each squaring doubles the run of zeros the map stands for:
-                // eight bits, then sixteen, then thirty-two ... so the bits of
-                // `len` select which of them to apply.
+                // Each squaring doubles the run of zeros the map stands for, so
+                // the bits of `len` select which of them to apply.
                 square(&even, &odd);
                 if (len & 1 != 0) crc = apply(&even, crc);
                 len >>= 1;

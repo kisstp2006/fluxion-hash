@@ -20,14 +20,8 @@
 //!   * `final`                    read the digest out
 //!
 //! `final` takes the hasher by value, so reading a digest does not end the
-//! hash: keep calling `update` afterwards and the next `final` covers
-//! everything fed in so far.
-//!
-//! `updateValue` feeds a whole Zig value - a struct, an optional, a slice of
-//! records - into any of them, and `Stream` turns one into a `std.Io.Writer`,
-//! so bytes can be hashed on their way somewhere else.
-//!
-//! Nothing here allocates.
+//! hash. `updateValue` feeds a whole Zig value into any of them, and `Stream`
+//! turns one into a `std.Io.Writer`. Nothing here allocates.
 
 const std = @import("std");
 const testing = std.testing;
@@ -39,14 +33,12 @@ const mix = @import("mix.zig");
 // -------------------------------------------------------------------------
 
 /// FNV-1a, 32 bits. A xor and a multiply per byte, no table and no buffer, so
-/// the whole hasher is four bytes of state. Short keys - identifiers, field
-/// names, extensions - are what it is for; on long input `Xx64` is several
-/// times faster per byte.
+/// the hasher is four bytes of state. For short keys; on long input `Xx64` is
+/// several times faster per byte.
 pub const Fnv1a32 = Fnv1a(u32, 0x811C9DC5, 0x01000193);
 
-/// FNV-1a, 64 bits. Same shape, more room, and worth the extra four bytes of
-/// state wherever 32 bits would start colliding: a few tens of thousands of
-/// keys is already a coin flip for a 32-bit hash.
+/// FNV-1a, 64 bits. Worth the extra four bytes wherever 32 would start
+/// colliding: a few tens of thousands of keys is already a coin flip there.
 pub const Fnv1a64 = Fnv1a(u64, 0xCBF29CE484222325, 0x00000100000001B3);
 
 fn Fnv1a(comptime T: type, comptime offset_basis: T, comptime prime: T) type {
@@ -63,9 +55,9 @@ fn Fnv1a(comptime T: type, comptime offset_basis: T, comptime prime: T) type {
             return .{ .state = offset_basis };
         }
 
-        /// The same, but starting from `seed`. Two hashers with different
-        /// seeds disagree about everything, which is what a hash table wants
-        /// on the day its keys turn out to collide.
+        /// The same, starting from `seed`. Two hashers with different seeds
+        /// disagree about everything - what a table wants on the day its keys
+        /// turn out to collide.
         pub fn initSeed(seed: T) Self {
             return .{ .state = seed };
         }
@@ -106,12 +98,12 @@ fn Fnv1a(comptime T: type, comptime offset_basis: T, comptime prime: T) type {
 // -------------------------------------------------------------------------
 
 /// MurmurHash3, the 32-bit variant. Four bytes at a time through two
-/// multiplies and a rotate, then `mix.fmix32` at the end to spread the last
-/// block over the whole word.
+/// multiplies and a rotate, then `mix.fmix32` to spread the last block over
+/// the whole word.
 ///
-/// Reach for it when 32 bits is what the format or the API wants: it
-/// distributes better than FNV-1a on structured input - paths that share a
-/// prefix, keys that differ in one character.
+/// For when 32 bits is what the format wants: it distributes better than
+/// FNV-1a on structured input - paths sharing a prefix, keys differing in one
+/// character.
 pub const Murmur3 = struct {
     const c1: u32 = 0xCC9E2D51;
     const c2: u32 = 0x1B873593;
@@ -208,10 +200,9 @@ pub const Murmur3 = struct {
 
 /// xxHash64: four independent lanes, 32 bytes a round, merged at the end.
 ///
-/// The default when there is nothing special about the input. It is the
-/// fastest of the three on anything longer than a few dozen bytes, and 64 bits
-/// is wide enough that collisions stay a curiosity rather than a design
-/// concern - a million keys collide with probability about one in 37 million.
+/// The default when there is nothing special about the input: fastest of the
+/// three past a few dozen bytes, and wide enough that collisions stay a
+/// curiosity - a million keys collide with probability about one in 37 million.
 pub const Xx64 = struct {
     const prime1: u64 = 0x9E3779B185EBCA87;
     const prime2: u64 = 0xC2B2AE3D27D4EB4F;
@@ -289,9 +280,8 @@ pub const Xx64 = struct {
     pub fn final(self: Xx64) Digest {
         var h: u64 = undefined;
         if (self.total >= 32) {
-            // Four lanes back into one word: rotated by different amounts so
-            // that they cannot cancel, then merged one at a time so that a
-            // difference in any of them reaches every bit.
+            // Four lanes into one word: rotated by different amounts so they
+            // cannot cancel, then merged one at a time.
             h = std.math.rotl(u64, self.acc[0], 1) +%
                 std.math.rotl(u64, self.acc[1], 7) +%
                 std.math.rotl(u64, self.acc[2], 12) +%
@@ -363,19 +353,16 @@ pub const ValueOptions = struct {
 
 /// Feed `value` into `hasher`, field by field.
 ///
-/// Integers go in little-endian at their declared width, so a `u24` occupies
-/// three bytes and a value hashes the same on a big-endian machine. Padding is
-/// never hashed, because fields are walked rather than reinterpreted as bytes.
-/// Optionals contribute a tag byte, unions their tag, and slices their length
-/// - so `.{ "ab", "c" }` and `.{ "a", "bc" }` do not land on one digest.
+/// Integers go in little-endian at their declared width, so a value hashes the
+/// same on a big-endian machine. Padding is never hashed: fields are walked
+/// rather than reinterpreted. Optionals contribute a tag byte, unions their
+/// tag, and slices their length - so `.{ "ab", "c" }` and `.{ "a", "bc" }` do
+/// not land on one digest.
 ///
-/// Floats are hashed by their bit pattern, which is the only stable choice but
-/// means `0.0` and `-0.0` hash differently while two NaNs with equal bits hash
-/// the same. Hash the parts you compare by, when that matters.
-///
-/// Types with no run-time content - `void`, `null`, a zero-bit integer -
-/// contribute nothing. Anything with no defensible answer, a many-item pointer
-/// or an untagged union, is a compile error rather than a guess.
+/// Floats are hashed by bit pattern, the only stable choice, which means `0.0`
+/// and `-0.0` differ. Types with no run-time content contribute nothing, and
+/// anything with no defensible answer - a many-item pointer, an untagged union
+/// - is a compile error rather than a guess.
 pub fn updateValue(hasher: anytype, value: anytype, comptime options: ValueOptions) void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
@@ -505,9 +492,8 @@ pub fn hashValueSeed(
 
 /// A `std.Io.Writer` that hashes everything written to it and keeps nothing.
 ///
-/// Anything in the standard library that writes to a stream can be hashed this
-/// way - a formatter, a file copy, a compressor - with no buffer in between
-/// and no second pass over the bytes:
+/// Anything that writes to a stream can be hashed this way - a formatter, a
+/// file copy, a compressor - with no buffer in between and no second pass:
 ///
 /// ```zig
 /// var stream: hash.Stream(hash.Xx64) = .init(.init());
@@ -530,8 +516,7 @@ pub fn Stream(comptime Hasher: type) type {
         pub fn init(hasher: Hasher) Self {
             return .{
                 .hasher = hasher,
-                // No buffer of its own: bytes go straight into the hasher,
-                // which is already the cheapest thing that can happen to them.
+                // No buffer of its own: bytes go straight into the hasher.
                 .io_writer = .{ .buffer = &.{}, .vtable = &writer_vtable },
             };
         }
