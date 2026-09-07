@@ -1,0 +1,24 @@
+# Everything `zig build` produces: the install prefix (binaries, and the docs
+# from `zig build docs`) and the local build cache. Both are derived from the
+# source in this repo, and the cache is machine-specific.
+zig-out/
+.zig-cache/
+# What that cache was called before Zig 0.13, in case an older toolchain runs.
+zig-cache/
+
+# Ad-hoc builds that bypass `zig build` - `zig build-exe`, `zig build-lib`,
+# `zig test some_file.zig` - drop their output next to the source instead.
+*.exe
+*.pdb
+*.obj
+*.o
+*.lib
+*.a
+
+# Editor and OS leavings.
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
