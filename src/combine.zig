@@ -2,29 +2,16 @@
 
 //! Hash combine: several hashes into one.
 //!
-//! The problem it solves: a record has three fields, each with a perfectly
-//! good hash, and the record needs one. Adding them makes `(1, 2)` and
-//! `(2, 1)` equal. Xoring them makes a value cancel itself. Multiplying by a
-//! small constant - the `31 * h + x` of Java folklore - leaves the low bits
-//! nearly where they were, so keys that differ in small ways land in
-//! neighbouring buckets, which is exactly what a table cannot afford.
+//! Adding hashes makes `(1, 2)` and `(2, 1)` equal, xoring lets a value cancel
+//! itself, and `31 * h + x` leaves the low bits where they were. So `step`
+//! runs every value through a full 64-bit mixer and multiplies the state by
+//! the golden ratio, which makes the result behave like a hash of the whole
+//! tuple however weak the parts were.
 //!
-//! So `step` runs every incoming value through a full 64-bit mixer before it
-//! touches the state, and multiplies the running state by the golden ratio on
-//! the way in. That costs a handful of instructions per value and makes the
-//! result behave like a hash of the whole tuple, however weak the parts were -
-//! small integers, pointers, a 32-bit CRC widened to 64.
+//!   `pair`, `all`, `Combiner`   order matters
+//!   `unordered`, `Unordered`    order does not
 //!
-//! Two ways to combine, and the difference matters:
-//!
-//!   `pair`, `all`, `Combiner`   order matters. Fields of a struct, elements
-//!                               of a list, the arguments of a call.
-//!   `unordered`, `Unordered`    order does not. Members of a set, entries of
-//!                               a map, anything iterated in whatever order
-//!                               the container felt like.
-//!
-//! Everything here works in `u64`. Widen a narrower hash on the way in -
-//! `@as(u64, crc)` - rather than combining in 32 bits and hoping.
+//! Everything here works in `u64`; widen a narrower hash on the way in.
 
 const std = @import("std");
 const testing = std.testing;
@@ -39,11 +26,8 @@ pub const empty: u64 = mix.golden64;
 /// The result is already a finished hash - there is no separate finalize step
 /// - so a running combination can be read at any point.
 pub fn step(state: u64, value: u64) u64 {
-    // The value is mixed first: a weak input, a small integer or a pointer or
-    // a checksum, would otherwise carry its structure into the result.
-    // Multiplying the state makes position matter, so `a, b` and `b, a` do not
-    // land in the same place, and the outer mixer spreads the difference over
-    // all 64 bits.
+    // The value is mixed first, so a weak input does not carry its structure
+    // into the result; multiplying the state makes position matter.
     return mix.fmix64((state *% mix.golden64) ^ mix.fmix64(value));
 }
 
@@ -99,13 +83,12 @@ pub const Combiner = struct {
 
 /// An order-independent combination: a running total of mixed values.
 ///
-/// Addition is commutative and associative, so the members can arrive in any
-/// order and in any grouping, and `remove` undoes an `add` - which makes this
-/// the right shape for a set that changes, or for a directory hash that has to
-/// be patched rather than recomputed.
+/// Addition is commutative and associative, so members can arrive in any order
+/// and `remove` undoes an `add` - which is what a changing set, or a directory
+/// hash that has to be patched rather than recomputed, wants.
 ///
-/// It is a multiset, not a set: adding the same value twice is not the same as
-/// adding it once. Deduplicate first if that is what you meant.
+/// A multiset, not a set: adding the same value twice differs from adding it
+/// once. Deduplicate first if that is what you meant.
 pub const Unordered = struct {
     total: u64 = 0,
     count: u64 = 0,
@@ -115,8 +98,7 @@ pub const Unordered = struct {
     }
 
     pub fn add(self: *Unordered, value: u64) void {
-        // Mixed on the way in, because the sum of unmixed values is a sum, and
-        // sums of nearby numbers are nearby numbers.
+        // Mixed on the way in: sums of nearby numbers are nearby numbers.
         self.total +%= mix.fmix64(value);
         self.count +%= 1;
     }
@@ -125,19 +107,16 @@ pub const Unordered = struct {
         for (values) |value| self.add(value);
     }
 
-    /// Take a value back out. Removing what was never added is not an error;
-    /// it leaves a state that no sequence of adds would have produced, which
-    /// is a fine hash of nothing in particular.
+    /// Take a value back out. Removing what was never added is not an error:
+    /// it leaves a state no sequence of adds would have produced.
     pub fn remove(self: *Unordered, value: u64) void {
         self.total -%= mix.fmix64(value);
         self.count -%= 1;
     }
 
-    /// The combination so far. The count goes in here rather than into the
-    /// running total, so that removing a value really does restore the state
-    /// it had before - and so that an empty set and a set holding one zero do
-    /// not agree. `empty` joins it for the same reason a hash of nothing
-    /// should not be zero.
+    /// The combination so far. The count goes in here rather than the running
+    /// total, so `remove` restores the state exactly and an empty set does not
+    /// agree with a set holding one zero.
     pub fn final(self: Unordered) u64 {
         return mix.fmix64(empty ^ self.total ^ (self.count *% mix.golden64));
     }

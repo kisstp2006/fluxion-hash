@@ -17,10 +17,6 @@
 //!   `update`                feed it more bytes, any number of times
 //!   `final`                 read the digest out, and carry on if you like
 //!
-//! On top of that, `hash.updateValue` feeds a whole Zig value into any of
-//! them, `hash.Stream` turns any of them into a `std.Io.Writer`, and
-//! `combine` folds their results together.
-//!
 //! Nothing here allocates, and nothing here is cryptographic: these are for
 //! hash tables, caches, dirty checks and transmission errors, not for
 //! signatures or for anything an attacker chooses the input of.
@@ -61,9 +57,8 @@ pub fn hashBytes(bytes: []const u8) u64 {
     return Default.hash(bytes);
 }
 
-/// Shorthand for hashing a whole value - a struct, a slice of records, an
-/// optional - with the default algorithm. See `hash.updateValue` for what
-/// each kind of type contributes.
+/// Shorthand for hashing a whole value with the default algorithm. See
+/// `hash.updateValue` for what each kind of type contributes.
 pub fn hashValue(value: anytype) u64 {
     return hash.hashValue(Default, value, .{});
 }
